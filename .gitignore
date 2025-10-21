@@ -1,0 +1,107 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+Thumbs.db
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+.packages
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+/android/local.properties
+**/*.keystore
+**/*.jks
+**/key.properties
+# Google services (no subir credenciales)
+**/google-services.json
+# Windows / Visual Studio (desktop)
+.vs/
+*.vcxproj.user
+*.suo
+*.user
+*.VC.db
+*.VC.VC.opendb
+*.ipch
+*.obj
+*.pdb
+*.tlog
+*.lastbuildstate
+# Config / Secrets
+.env
+.env.*
+*.pem
+*.crt
+*.p12
+*.key
+# ── Datos locales (desarrollo / runtime) ─────────────────────────────
+# Carpetas locales dentro del repo (úsalas para pruebas)
+# Las mantenemos fuera del control de versiones:
+/local_data/**
+/local_imports/**
+/local_exports/**
+/tmp/**
+
+# Permite mantener vacías las carpetas con un placeholder
+!/local_data/.gitkeep
+!/local_imports/.gitkeep
+!/local_exports/.gitkeep
+!/tmp/.gitkeep
+
+# Bases SQLite en cualquier ubicación del repo
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Archivos generados (solo dentro de carpetas locales)
+# Evita ignorar CSV/XLSX globalmente para poder versionar assets de ejemplo
+/local_data/**/*.csv
+/local_data/**/*.xlsx
+/local_data/**/*.xls
+/local_imports/**/*.csv
+/local_imports/**/*.xlsx
+/local_imports/**/*.xls
+/local_exports/**/*.csv
+/local_exports/**/*.xlsx
+/local_exports/**/*.xls
+/tmp/**/*.csv
+/tmp/**/*.xlsx
+/tmp/**/*.xls
