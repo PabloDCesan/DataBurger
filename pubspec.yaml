@@ -7,6 +7,7 @@ environment:
   sdk: ^3.9.2
 
 dependencies:
+  csv: ^6.0.0
   excel: ^4.0.6
   file_picker: ^10.3.3
   flutter:
@@ -14,6 +15,7 @@ dependencies:
   flutter_riverpod: ^3.0.3
   path: ^1.9.1
   path_provider: ^2.1.5
+  sqflite_common_ffi: ^2.3.6
   
 dev_dependencies:
   flutter_test:

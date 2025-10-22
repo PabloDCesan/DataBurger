@@ -1,0 +1,154 @@
+import 'dart:io';
+import 'dart:convert';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+
+/// Convierte un .xls a .xlsx usando PowerShell + Excel COM en Windows.
+/// Requiere Microsoft Excel instalado. Devuelve la ruta del .xlsx.
+Future<String> convertXlsToXlsxWindows(String xlsPath) async {
+  if (!Platform.isWindows) {
+    throw UnsupportedError('Conversión .xls→.xlsx automática solo en Windows.');
+  }
+  final src = File(xlsPath);
+  if (!await src.exists()) {
+    throw ArgumentError('No existe el archivo: $xlsPath');
+  }
+
+  // Salida en temp
+  final tmpDir = await getTemporaryDirectory();
+  final outPath = p.join(tmpDir.path, '${p.basenameWithoutExtension(xlsPath)}_conv.xlsx');
+
+  // 1) Intentar con script en carpeta scripts/
+  String? scriptPath = await _resolveScriptPath();
+
+  // 2) Si no existe, escribir el script embebido a temp
+  scriptPath ??= await _writeEmbeddedScriptToTemp();
+
+  final args = [
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', scriptPath,
+    '-InputPath', xlsPath,
+    '-OutputPath', outPath,
+  ];
+
+  final proc = await Process.run('powershell.exe', args);
+  final ok = proc.exitCode == 0 &&
+      (proc.stdout.toString().trim().endsWith('OK') || await File(outPath).exists());
+  if (!ok) {
+    final msg = 'Falló conversión .xls→.xlsx\nSTDOUT:\n${proc.stdout}\nSTDERR:\n${proc.stderr}';
+    throw ProcessException('powershell.exe', args, msg, proc.exitCode);
+  }
+  return outPath;
+}
+
+/// Convierte un .xlsx a .csv (primera hoja) usando PowerShell + Excel COM (Windows).
+/// Requiere Microsoft Excel instalado. Devuelve la ruta del .csv de salida.
+Future<String> convertXlsxToCsvWindows(String xlsxPath) async {
+  if (!Platform.isWindows) {
+    throw UnsupportedError('La conversión .xlsx→.csv automática solo está soportada en Windows.');
+  }
+  final src = File(xlsxPath);
+  if (!await src.exists()) {
+    throw ArgumentError('No existe el archivo: $xlsxPath');
+  }
+
+  // Salida en temp
+  final tmpDir = await getTemporaryDirectory();
+  final outPath = p.join(tmpDir.path, '${p.basenameWithoutExtension(xlsxPath)}_conv.csv');
+
+  // Script embebido: guarda la PRIMERA hoja como CSV
+  const ps1 = r'''
+param(
+  [Parameter(Mandatory=$true)][string]$InputPath,
+  [Parameter(Mandatory=$true)][string]$OutputPath
+)
+$xlCSV = 6
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$excel.DisplayAlerts = $false
+try {
+  $wb = $excel.Workbooks.Open($InputPath)
+  $ws = $wb.Worksheets.Item(1)
+  $ws.SaveAs($OutputPath, $xlCSV)
+  $wb.Close($false)
+  Write-Output "OK"
+} catch {
+  Write-Error $_.Exception.Message
+  exit 1
+} finally {
+  $excel.Quit() | Out-Null
+  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
+}
+''';
+
+  final psFile = File(p.join(tmpDir.path, 'convert-xlsx-to-csv.ps1'));
+  await psFile.writeAsString(ps1, encoding: const Utf8Codec());
+
+  final args = [
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', psFile.path,
+    '-InputPath', xlsxPath,
+    '-OutputPath', outPath,
+  ];
+
+  final result = await Process.run('powershell.exe', args);
+  final ok = result.exitCode == 0 && await File(outPath).exists();
+  if (!ok) {
+    throw ProcessException(
+      'powershell.exe',
+      args,
+      'Falló conversión .xlsx→.csv\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}',
+      result.exitCode,
+    );
+  }
+  return outPath;
+}
+
+// Busca scripts/convert-xls.ps1 cerca del ejecutable o del cwd (dev).
+Future<String?> _resolveScriptPath() async {
+  // A) al lado del ejecutable (build windows)
+  try {
+    final exeDir = File(Platform.resolvedExecutable).parent;
+    final candidate = File(p.join(exeDir.path, 'scripts', 'convert-xls.ps1'));
+    if (await candidate.exists()) return candidate.path;
+  } catch (_) {}
+
+  // B) cwd (útil en desarrollo)
+  final candidate2 = File(p.join(Directory.current.path, 'scripts', 'convert-xls.ps1'));
+  if (await candidate2.exists()) return candidate2.path;
+
+  return null;
+}
+
+// Si no lo encuentra, lo escribe desde esta constante al temp y lo usa igual.
+Future<String> _writeEmbeddedScriptToTemp() async {
+  const ps1 = r'''
+param(
+  [Parameter(Mandatory=$true)][string]$InputPath,
+  [Parameter(Mandatory=$true)][string]$OutputPath
+)
+$xlOpenXML = 51
+$excel = New-Object -ComObject Excel.Application
+$excel.Visible = $false
+$excel.DisplayAlerts = $false
+try {
+  $wb = $excel.Workbooks.Open($InputPath)
+  $wb.SaveAs($OutputPath, $xlOpenXML)
+  $wb.Close($false)
+  Write-Output "OK"
+} catch {
+  Write-Error $_.Exception.Message
+  exit 1
+} finally {
+  $excel.Quit() | Out-Null
+  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel) | Out-Null
+}
+''';
+
+  final tmpDir = await getTemporaryDirectory();
+  final file = File(p.join(tmpDir.path, 'convert-xls.ps1'));
+  await file.writeAsString(ps1, encoding: const Utf8Codec());
+  return file.path;
+}
