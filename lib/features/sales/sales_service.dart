@@ -234,14 +234,52 @@ class SalesService {
   }
 
   Future<List<Map<String, dynamic>>> _readRows(String path) async {
-    if (path.toLowerCase().endsWith('.xlsx')) {
-      return _readRowsXlsx(path);
-    } else if (path.toLowerCase().endsWith('.csv')) {
-      return _readRowsCsv(path);
-    } else {
-      throw UnsupportedError('Formato no soportado: $path');
+    // En Windows probamos primero Excel→JSON (más robusto para .xls/.xlsx con formatos raros)
+    if (Platform.isWindows) {
+      try {
+        final jsonPath = await convertExcelToJsonWindows(path);
+        return await _readRowsJson(jsonPath);
+      } catch (_) {
+        // Fallbacks por tipo de archivo
+        final lower = path.toLowerCase();
+        if (lower.endsWith('.xlsx')) {
+          try {
+            return await _readRowsXlsx(path);
+          } catch (_) {
+            // si falla el paquete excel, intentá xlsx→csv y luego csv
+            final csvPath = await convertXlsxToCsvWindows(path);
+            return await _readRowsCsv(csvPath);
+          }
+        }
+        if (lower.endsWith('.xls')) {
+          // convertir a .xlsx y leer como .xlsx
+          final xlsx = await convertXlsToXlsxWindows(path);
+          try {
+            return await _readRowsXlsx(xlsx);
+          } catch (_) {
+            final csvPath = await convertXlsxToCsvWindows(xlsx);
+            return await _readRowsCsv(csvPath);
+          }
+        }
+        if (lower.endsWith('.csv')) {
+          return await _readRowsCsv(path);
+        }
+        throw UnsupportedError('Formato no soportado: $path');
+      }
     }
+
+    // NO Windows → pipeline clásico
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.xlsx')) return _readRowsXlsx(path);
+    if (lower.endsWith('.csv'))  return _readRowsCsv(path);
+    if (lower.endsWith('.xls'))  {
+      final xlsx = await convertXlsToXlsxWindows(path);
+      return _readRowsXlsx(xlsx);
+    }
+    throw UnsupportedError('Formato no soportado: $path');
   }
+
+
 
   Future<List<Map<String, dynamic>>> _readRowsXlsx(String path) async {
       try {
@@ -309,6 +347,39 @@ class SalesService {
     }
     return rows;
   }
+
+  // Lee el JSON generado por convertExcelToJsonWindows() y lo normaliza
+  Future<List<Map<String, dynamic>>> _readRowsJson(String jsonPath) async {
+    final content = await File(jsonPath).readAsString();
+    final data = jsonDecode(content);
+
+    if (data is! List) return [];
+
+    // Normalizamos las filas a los encabezados esperados (_REQUIRED_HEADERS)
+    // Si falta alguna key en el JSON, la rellenamos con "" para mantener el mismo esquema.
+    final rows = <Map<String, dynamic>>[];
+    for (final e in data) {
+      if (e is! Map) continue;
+      final map = <String, dynamic>{};
+      for (final h in _REQUIRED_HEADERS) {
+        final v = e[h];
+        // Mantener números como números, strings como strings; null -> ""
+        if (v == null) {
+          map[h] = '';
+        } else if (v is num) {
+          map[h] = v;
+        } else {
+          map[h] = v.toString();
+        }
+      }
+      rows.add(map);
+    }
+
+    // (Opcional) Validación suave: verificar que al menos existan las claves básicas
+    // Si querés estricto, podés chequear y lanzar FormatException como en CSV/XLSX.
+    return rows;
+  }
+
 }
 
 class _SalesRow {
@@ -342,22 +413,50 @@ extension SalesQueries on SalesService {
   }
 
   Future<List<Map<String, Object?>>> summaryForMonth(DateTime month) async {
-    final first = DateTime(month.year, month.month, 1);
-    final next = DateTime(month.year, month.month + 1, 1);
-    final from = '${first.year.toString().padLeft(4,'0')}-${first.month.toString().padLeft(2,'0')}-01';
-    final to = '${next.year.toString().padLeft(4,'0')}-${next.month.toString().padLeft(2,'0')}-01';
+      final first = DateTime(month.year, month.month, 1);
+      final next = DateTime(month.year, month.month + 1, 1);
+      final from = '${first.year.toString().padLeft(4,'0')}-${first.month.toString().padLeft(2,'0')}-01';
+      final to = '${next.year.toString().padLeft(4,'0')}-${next.month.toString().padLeft(2,'0')}-01';
 
-    return db.rawQuery('''
-      SELECT day, ingreso_real, ingreso_total, retiro_apps, count_pedidosya, count_rappi
-      FROM daily_sales_summary
-      WHERE day >= ? AND day < ?
-      ORDER BY day ASC
-    ''', [from, to]);
+      return db.rawQuery('''
+        SELECT day, ingreso_real, ingreso_total, retiro_apps, count_pedidosya, count_rappi
+        FROM daily_sales_summary
+        WHERE day >= ? AND day < ?
+        ORDER BY day ASC
+      ''', [from, to]);
+    }
+
+    Future<bool> hasPreviousMonthData(DateTime ref) async {
+      final prev = DateTime(ref.year, ref.month - 1, 1);
+      final rows = await summaryForMonth(prev);
+      return rows.isNotEmpty;
+    }
+  
   }
 
-  Future<bool> hasPreviousMonthData(DateTime ref) async {
-    final prev = DateTime(ref.year, ref.month - 1, 1);
-    final rows = await summaryForMonth(prev);
-    return rows.isNotEmpty;
+extension SalesQueriesTotals on SalesService {
+    Future<Map<String, Object?>> summaryMonthTotals(DateTime month) async {
+      final first = DateTime(month.year, month.month, 1);
+      final next  = DateTime(month.year, month.month + 1, 1);
+      final from  = '${first.year.toString().padLeft(4, '0')}-${first.month.toString().padLeft(2, '0')}-01';
+      final to    = '${next.year.toString().padLeft(4, '0')}-${next.month.toString().padLeft(2, '0')}-01';
+
+      final rows = await db.rawQuery('''
+        SELECT
+          MIN(day)  AS first_day,
+          MAX(day)  AS last_day,
+          SUM(ingreso_real)   AS ingreso_real,
+          SUM(ingreso_total)  AS ingreso_total,
+          SUM(retiro_apps)    AS retiro_apps,
+          SUM(count_pedidosya) AS count_pedidosya,
+          SUM(count_rappi)     AS count_rappi
+        FROM daily_sales_summary
+        WHERE day >= ? AND day < ?
+      ''', [from, to]);
+
+      if (rows.isEmpty || rows.first.values.every((v) => v == null)) {
+        return {};
+      }
+      return rows.first;
+    }
   }
-}

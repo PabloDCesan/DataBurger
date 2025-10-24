@@ -152,3 +152,118 @@ try {
   await file.writeAsString(ps1, encoding: const Utf8Codec());
   return file.path;
 }
+
+/// Convierte un .xls/.xlsx a JSON (primera hoja) usando PowerShell + Excel COM.
+/// Devuelve la ruta al .json generado.
+Future<String> convertExcelToJsonWindows(String inputPath, {String? sheetName}) async {
+  if (!Platform.isWindows) {
+    throw UnsupportedError('Excel→JSON automático solo en Windows.');
+  }
+  final src = File(inputPath);
+  if (!await src.exists()) {
+    throw ArgumentError('No existe el archivo: $inputPath');
+  }
+
+  final tmpDir = await getTemporaryDirectory();
+  final outPath = p.join(tmpDir.path, '${p.basenameWithoutExtension(inputPath)}.json');
+
+  // Script embebido (basado en el tuyo, con mínimos ajustes y UTF8)
+  const ps1 = r'''
+param(
+  [Parameter(Mandatory=$true)][string]$InputFile,
+  [Parameter(Mandatory=$true)][string]$OutputFileName,
+  [string]$SheetName
+)
+
+$InputFile     = [System.IO.Path]::GetFullPath($InputFile)
+$OutputFileName = [System.IO.Path]::GetFullPath($OutputFileName)
+
+$excel = New-Object -ComObject Excel.Application
+$excel.DisplayAlerts = $false
+$wb = $excel.Workbooks.Open($InputFile)
+
+try {
+  if (-not $SheetName) {
+    if ($wb.Sheets.Count -eq 1) {
+      $SheetName = @($wb.Sheets)[0].Name
+    } else {
+      # si hay varias hojas y no especificás, usamos la primera
+      $SheetName = @($wb.Sheets)[0].Name
+    }
+  } else {
+    $theSheet = $wb.Sheets | Where-Object { $_.Name -eq $SheetName }
+    if (-not $theSheet) { throw "No existe la hoja '$SheetName' en el workbook." }
+  }
+
+  $theSheet = $wb.Sheets | Where-Object { $_.Name -eq $SheetName }
+
+  # Headers (fila 1)
+  $Headers = @{}
+  $col = 1
+  while ($true) {
+    $cellValue = $theSheet.Cells.Item(1, $col).Text
+    if ($null -eq $cellValue -or $cellValue.Trim().Length -eq 0) { break }
+    $Headers.$col = $cellValue
+    $col++
+  }
+  $NumberOfColumns = $Headers.Count
+
+  # Filas
+  $rowsToIterate = $theSheet.UsedRange.Rows.Count
+  $results = @()
+  for ($row = 2; $row -le ($rowsToIterate + 1); $row++) {
+    $result = @{}
+    foreach ($kv in $Headers.GetEnumerator()) {
+      $colIndex = [int]$kv.Name
+      $colName  = [string]$kv.Value
+      $val = $theSheet.Cells.Item($row, $colIndex).Value2
+      $result[$colName] = $val
+    }
+    # Filtro: descartar filas totalmente vacías
+    $allEmpty = $true
+    foreach ($v in $result.Values) { if ($null -ne $v -and "$v".Trim().Length -gt 0) { $allEmpty = $false; break } }
+    if (-not $allEmpty) { $results += [pscustomobject]$result }
+  }
+
+  $json = $results | ConvertTo-Json -Depth 4
+  # UTF8 sin BOM (por defecto en PS5/7 es UTF8-BOM; forzamos -Encoding utf8)
+  Set-Content -Path $OutputFileName -Value $json -Encoding utf8
+
+  Write-Output "OK"
+}
+catch {
+  Write-Error $_.Exception.Message
+  exit 1
+}
+finally {
+  $wb.Close($false) | Out-Null
+  $excel.Quit()    | Out-Null
+  [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel)
+}
+''';
+
+  final psFile = File(p.join(tmpDir.path, 'excel-to-json.ps1'));
+  await psFile.writeAsString(ps1, encoding: const Utf8Codec());
+
+  final args = [
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', psFile.path,
+    '-InputFile', inputPath,
+    '-OutputFileName', outPath,
+  ];
+  if (sheetName != null && sheetName.isNotEmpty) {
+    args.addAll(['-SheetName', sheetName]);
+  }
+
+  final result = await Process.run('powershell.exe', args);
+  final ok = result.exitCode == 0 && await File(outPath).exists();
+  if (!ok) {
+    throw ProcessException(
+      'powershell.exe', args,
+      'Falló Excel→JSON\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}',
+      result.exitCode,
+    );
+  }
+  return outPath;
+}

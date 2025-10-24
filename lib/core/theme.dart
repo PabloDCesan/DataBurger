@@ -35,6 +35,14 @@ class AppTheme {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          minimumSize: const Size(200, 100),
+          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+      ),
       extensions: const [
         TileStyle(
           bg: Color.fromARGB(255, 36, 61, 129),   // base (tu color)

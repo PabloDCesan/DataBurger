@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 import '../../core/db_provider.dart'; // <- para ref.read(databaseProvider)
 import '../../core/xls_converter.dart';
 import '../sales/sales_service.dart';
+import '../../widgets/app_alerts.dart';
 
 class DashboardScreen extends StatelessWidget {
   final String username;
@@ -231,26 +232,72 @@ class _ModifySalesScreen extends ConsumerStatefulWidget {
 }
 
 class _ModifySalesScreenState extends ConsumerState<_ModifySalesScreen> {
-  List<List<dynamic>> _preview = [];
+  String? _pickedPath;
   String? _fileName;
+
   DateTime? _lastUpload;
   bool _prevMonthAvailable = false;
-  List<Map<String, Object?>> _currentMonth = [];
-  List<Map<String, Object?>> _prevMonth = [];
-  String? _pickedPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshMeta();
+  }
 
   Future<void> _refreshMeta() async {
     final svc = SalesService(ref.read(databaseProvider));
     _lastUpload = await svc.lastUploadAt();
     _prevMonthAvailable = await svc.hasPreviousMonthData(DateTime.now());
-    setState(() {});
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _pickFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx', 'xls', 'csv'],
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final f = result.files.single;
+    _pickedPath = f.path;
+    _fileName   = f.name;
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _importToDb() async {
+    if (_pickedPath == null) {
+      showError(context, 'Primero elegí un archivo.');
+      return;
+    }
+    final svc = SalesService(ref.read(databaseProvider));
+    try {
+      final res = await svc.importSalesFromFile(_pickedPath!, fileName: _fileName);
+      // Mensaje claro de resultado
+      final msg =
+          'Carga realizada.\n'
+          'Días nuevos: ${res.insertedDays}, ignorados: ${res.skippedDays}\n'
+          'Ingreso Real: ${res.ingresoRealTotal.toStringAsFixed(2)} / '
+          'Total: ${res.ingresoTotalTotal.toStringAsFixed(2)} / '
+          'Retiros: ${res.retiroAppsTotal.toStringAsFixed(2)}';
+      showSuccess(context, msg);
+
+      await _refreshMeta();
+
+      // opcional: limpiar selección
+      // setState(() { _pickedPath = null; _fileName = null; });
+
+    } on FormatException catch (e) {
+      showError(context, 'Encabezados inválidos: ${e.message}');
+    } catch (e) {
+      showError(context, 'Problema en la carga: $e');
+    }
   }
 
   String _formatLastUpload(DateTime? dt) {
     if (dt == null) return '—';
-    // dd de MES a las hh:mm (24h)
     const meses = [
-      '', 'enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'
+      '', 'enero','febrero','marzo','abril','mayo','junio',
+      'julio','agosto','septiembre','octubre','noviembre','diciembre'
     ];
     final dd = dt.day.toString().padLeft(2,'0');
     final mes = meses[dt.month];
@@ -261,60 +308,16 @@ class _ModifySalesScreenState extends ConsumerState<_ModifySalesScreen> {
 
   Future<void> _showCurrentMonth() async {
     final svc = SalesService(ref.read(databaseProvider));
-    _currentMonth = await svc.summaryForMonth(DateTime.now());
-    _showTableDialog('Estado actual (mes en curso)', _currentMonth);
+    final rows = await svc.summaryForMonth(DateTime.now());
+    _showTableDialog('Estado actual (mes en curso)', rows);
   }
 
   Future<void> _showPrevMonth() async {
     final svc = SalesService(ref.read(databaseProvider));
     final now = DateTime.now();
     final prev = DateTime(now.year, now.month - 1, 1);
-    _prevMonth = await svc.summaryForMonth(prev);
-    _showTableDialog('Estado mes anterior', _prevMonth);
-  }
-  
-  // Limpia encabezados (quita comillas, trim)
-  String _cleanHeader(dynamic v) {
-    final s = (v ?? '').toString().trim();
-    return s.replaceAll('"', '').replaceAll("'", '');
-  }
-
-  // Construcción segura del DataTable a partir de _preview
-  Widget buildPreviewTable() {
-    if (_preview.isEmpty) return const SizedBox.shrink();
-
-    // 1) La primera fila son los headers
-    final rawHeader = _preview.first;
-    final headers = rawHeader.map(_cleanHeader).toList();
-    final colCount = headers.length;
-
-    // 2) Filas de datos = resto
-    final dataRows = _preview.length > 1 ? _preview.sublist(1) : const <List<dynamic>>[];
-
-    // 3) Columnas
-    final columns = [
-      for (var i = 0; i < colCount; i++)
-        DataColumn(label: Text(headers[i].isEmpty ? 'Col ${i + 1}' : headers[i])),
-    ];
-
-    // 4) Filas, ajustando largo (pad/trunc)
-    final rows = <DataRow>[
-      for (final row in dataRows)
-        DataRow(
-          cells: List.generate(colCount, (i) {
-            final val = i < row.length ? row[i] : '';
-            return DataCell(Text('${val ?? ''}'));
-          }),
-        ),
-    ];
-
-    return SizedBox(
-      height: 360,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(columns: columns, rows: rows),
-      ),
-    );
+    final rows = await svc.summaryForMonth(prev);
+    _showTableDialog('Estado mes anterior', rows);
   }
 
   void _showTableDialog(String title, List<Map<String, Object?>> rows) {
@@ -323,146 +326,84 @@ class _ModifySalesScreenState extends ConsumerState<_ModifySalesScreen> {
       builder: (_) => AlertDialog(
         title: Text(title),
         content: SizedBox(
-          width: 640, height: 420,
+          width: 850,              // ⬅️ más ancho
+          height: 520,             // ⬅️ más alto
           child: rows.isEmpty
               ? const Center(child: Text('Sin datos para mostrar'))
-              : SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
+              : Scrollbar(
+                  child: SingleChildScrollView(        // ⬅️ scroll vertical
+                    child: Center(      // ⬅️ scroll horizontal
+                      //scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columns: const [
+                          DataColumn(label: Text('Día')),
+                          DataColumn(label: Text('Ingreso Real')),
+                          DataColumn(label: Text('Ingreso Total')),
+                          DataColumn(label: Text('Retiros Apps')),
+                          DataColumn(label: Text('PedidosYa')),
+                          DataColumn(label: Text('Rappi')),
+                        ],
+                        rows: rows.map((r) => DataRow(cells: [
+                          DataCell(Text('${r['day']}')),
+                          DataCell(Text('${r['ingreso_real']}')),
+                          DataCell(Text('${r['ingreso_total']}')),
+                          DataCell(Text('${r['retiro_apps']}')),
+                          DataCell(Text('${r['count_pedidosya']}')),
+                          DataCell(Text('${r['count_rappi']}')),
+                        ])).toList(),
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        ],
+      ),
+    );
+  }
+
+  void _showTotalsDialog(String title, Map<String, Object?> totals) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 900,
+          height: 220,
+          child: (totals.isEmpty || totals.values.every((v) => v == null))
+              ? const Center(child: Text('Sin datos para mostrar'))
+              : Center(
+                  //scrollDirection: Axis.horizontal,
                   child: DataTable(
                     columns: const [
-                      DataColumn(label: Text('Día')),
+                      DataColumn(label: Text('Primer carga')),  // min(day)
+                      DataColumn(label: Text('Última carga')),  // max(day)
                       DataColumn(label: Text('Ingreso Real')),
                       DataColumn(label: Text('Ingreso Total')),
                       DataColumn(label: Text('Retiros Apps')),
                       DataColumn(label: Text('PedidosYa')),
                       DataColumn(label: Text('Rappi')),
                     ],
-                    rows: rows.map((r) {
-                      return DataRow(cells: [
-                        DataCell(Text('${r['day']}')),
-                        DataCell(Text('${r['ingreso_real']}')),
-                        DataCell(Text('${r['ingreso_total']}')),
-                        DataCell(Text('${r['retiro_apps']}')),
-                        DataCell(Text('${r['count_pedidosya']}')),
-                        DataCell(Text('${r['count_rappi']}')),
-                      ]);
-                    }).toList(),
+                    rows: [
+                      DataRow(cells: [
+                        DataCell(Text('${totals['first_day'] ?? '—'}')),
+                        DataCell(Text('${totals['last_day'] ?? '—'}')),
+                        DataCell(Text('${totals['ingreso_real'] ?? 0}')),
+                        DataCell(Text('${totals['ingreso_total'] ?? 0}')),
+                        DataCell(Text('${totals['retiro_apps'] ?? 0}')),
+                        DataCell(Text('${totals['count_pedidosya'] ?? 0}')),
+                        DataCell(Text('${totals['count_rappi'] ?? 0}')),
+                      ]),
+                    ],
                   ),
                 ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
         ],
       ),
     );
-  }
-  Future<void> _pickAndPreview() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['xlsx', 'csv', 'xls'],
-    );
-    if (result == null || result.files.isEmpty) return;
-
-    final file = result.files.single;
-    String? path = file.path;
-    _pickedPath = file.path; // guarda la ruta original
-    _fileName = file.name;
-
-    final ext = (file.extension ?? '').toLowerCase();
-
-    try {
-      if (ext == 'xls') {
-        // 1) Convertir automáticamente
-        final xlsxPath = await convertXlsToXlsxWindows(path!);
-        path = xlsxPath;
-        _pickedPath = xlsxPath; //actualizar para el import
-        //_fileName = '${p.basenameWithoutExtension(_fileName!)}.xlsx (convertido)';
-        // cambio hecho por si filename fuese null:
-        final base = p.basenameWithoutExtension(_fileName ?? path);
-        _fileName = '$base.xlsx (convertido)';
-      }
-
-      if (path == null) return;
-        // ACA
-      if (path.toLowerCase().endsWith('.xlsx')) {if (path.toLowerCase().endsWith('.xlsx')) {
-        try {
-          // Intento normal con paquete excel
-          final bytes = await File(path).readAsBytes();
-          final ex = Excel.decodeBytes(bytes);  // si aliaste: xls.Excel.decodeBytes(bytes)
-          final sheet = ex.tables.values.first;
-
-          _preview = [];
-          for (var r = 0; r < sheet.maxRows && r < 20; r++) {
-            final row = sheet.row(r).map((c) => c?.value).toList();
-            _preview.add(row);
-          }
-        } catch (e) {
-          // ⛑️ Fallback robusto: convertir a CSV con PowerShell y leer CSV
-          final csvPath = await convertXlsxToCsvWindows(path);
-          final content = await File(csvPath).readAsString();
-          final csv = const CsvToListConverter(eol: '\n', shouldParseNumbers: false).convert(content);
-
-          _preview = [];
-          final max = csv.length < 20 ? csv.length : 20;
-          for (var r = 0; r < max; r++) {
-            final row = csv[r].map((e) => e?.toString() ?? '').toList();
-            _preview.add(row);
-          }
-        }
-      } else if (path.toLowerCase().endsWith('.csv')) {
-        final content = await File(path).readAsString();
-        final lines = const LineSplitter().convert(content);
-        _preview = [];
-        for (var i = 0; i < lines.length && i < 20; i++) {
-          _preview.add(lines[i].split(',')); // básico; luego metemos paquete csv para comillas/separadores
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Formato no soportado. Use .xlsx, .csv o .xls (se convierte).')),
-        );
-        return;
-      }
-
-      setState(() {});
-    }} catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo procesar el archivo: $e')),
-      );
-    }
-  }
-
-Future<void> _importToDb() async {
-  if (_pickedPath == null) { /* ... */ return; }
-  final svc = SalesService(ref.read(databaseProvider));
-  try {
-    final res = await svc.importSalesFromFile(_pickedPath!, fileName: _fileName);
-
-    final msg =
-        'Días nuevos: ${res.insertedDays}, ignorados: ${res.skippedDays}\n'
-        'Ingreso Real: ${res.ingresoRealTotal.toStringAsFixed(2)}\n'
-        'Ingreso Total: ${res.ingresoTotalTotal.toStringAsFixed(2)}\n'
-        'Retiros Apps: ${res.retiroAppsTotal.toStringAsFixed(2)}\n'
-        'PedidosYa: ${res.countPedidosYaTotal}, Rappi: ${res.countRappiTotal}';
-
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    await _refreshMeta();
-  } on FormatException catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Encabezados inválidos: ${e.message}')),);
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Error al importar: $e')),
-    );
-  }
-}
-
-  @override
-  void initState() {
-    super.initState();
-    _refreshMeta();
   }
 
   @override
@@ -470,65 +411,120 @@ Future<void> _importToDb() async {
     return _StubScaffold(
       title: 'Modificar Ventas',
       child: Column(
-        mainAxisSize: MainAxisSize.min,
-         crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               FilledButton.icon(
-                onPressed: _pickAndPreview,
+                onPressed: _pickFile,
                 icon: const Icon(Icons.folder_open),
                 label: const Text('Elegir archivo (.xlsx / .xls / .csv)'),
               ),
               const SizedBox(width: 16),
               Text('Última actualización: ${_formatLastUpload(_lastUpload)}'),
-              const Spacer(),
-              FilledButton(
-                onPressed: _showCurrentMonth,
-                child: const Text('Ver estado actual'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: _prevMonthAvailable ? _showPrevMonth : null,
-                child: const Text('Ver estado de mes anterior'),
-              ),
+              //const Spacer(),
             ],
           ),
           const SizedBox(height: 16),
-          if (_fileName != null) Text('Archivo: $_fileName'),
-          const SizedBox(height: 12),
-          if (_preview.isNotEmpty)
-            SizedBox(
-              height: 360,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  columns: [
-                    for (var i = 0; i < (_preview.first.length); i++)
-                      DataColumn(label: Text('Col ${i + 1}')),
-                  ],
-                  rows: [
-                    for (var r = 0; r < _preview.length; r++)
-                      DataRow(
-                        cells: [
-                          for (final cell in _preview[r]) DataCell(Text('${cell ?? ''}')),
-                        ],
-                      ),
-                  ],
-                ),
+         //   ],
+        //  ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              
+              // Botón Importar (sin preview)
+              FilledButton.icon(
+                onPressed: _pickedPath != null ? _importToDb : null,
+                icon: const Icon(Icons.save_alt),
+                label: const Text('Importar / Guardar'),
               ),
-            ),
+              // En lugar de: if (_fileName != null) ...[ ... ],
+              // armamos un widget auxiliar y lo agregamos como un solo child:
+              // Texto con el nombre del archivo (opcional)
+              (_fileName != null)
+                  ? Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Opacity(
+                        opacity: .8,
+                        child: Text('Archivo seleccionado: $_fileName'),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+                 ],
+              ),
           const SizedBox(height: 16),
-          if (_preview.isNotEmpty)
-            FilledButton.icon(
-              onPressed: _importToDb,
-              icon: const Icon(Icons.save_alt),
-              label: const Text('Importar / Guardar'),
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Ver estado del presente mes, sumado en una linea
+              FilledButton(
+                onPressed: _showCurrentMonthTotals,
+                child: const Text('Ver estado actual'),
+              ),
+              const SizedBox(width: 8),
+              
+              // Ver estado del presente mes, dia a dia
+              FilledButton(
+                onPressed: _showCurrentMonthDaily,
+                child: const Text('Ver estado actual - Diario'),
+              ),
+              
+                 ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Mes anterior (totales)
+              FilledButton(
+                onPressed: _prevMonthAvailable ? _showPrevMonthTotals : null,
+                child: const Text('Ver mes anterior'),
+              ),
+              const SizedBox(width: 8),
+              
+              // Mes anterior (diario) - ya lo tenías
+              FilledButton(
+                onPressed: _prevMonthAvailable ? _showPrevMonthDaily : null,
+                child: const Text('Ver mes anterior - Diario'),
+              ),
+              
+                 ],
+          ),  
         ],
       ),
     );
   }
+
+  Future<void> _showCurrentMonthDaily() async {
+    final svc = SalesService(ref.read(databaseProvider));
+    final rows = await svc.summaryForMonth(DateTime.now());
+    _showTableDialog('Estado actual (diario)', rows);
+  }
+
+  Future<void> _showPrevMonthDaily() async {
+    final svc = SalesService(ref.read(databaseProvider));
+    final now = DateTime.now();
+    final prev = DateTime(now.year, now.month - 1, 1);
+    final rows = await svc.summaryForMonth(prev);
+    _showTableDialog('Estado mes anterior (diario)', rows);
+  }
+
+  Future<void> _showCurrentMonthTotals() async {
+    final svc = SalesService(ref.read(databaseProvider));
+    final m = await svc.summaryMonthTotals(DateTime.now());
+    _showTotalsDialog('Estado actual (totales del mes)', m);
+  }
+
+  Future<void> _showPrevMonthTotals() async {
+    final svc = SalesService(ref.read(databaseProvider));
+    final now = DateTime.now();
+    final prev = DateTime(now.year, now.month - 1, 1);
+    final m = await svc.summaryMonthTotals(prev);
+    _showTotalsDialog('Estado mes anterior (totales)', m);
+  }
+
 }
 /// ==== Stubs de pantallas (para que compile y puedas navegar) ====
 

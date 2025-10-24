@@ -1,23 +1,22 @@
 DateTime? parseDdMmYyyyHhMm(String raw) {
-  // Espera "dd.mm.aaaa hh:mm"
   if (raw.isEmpty) return null;
-  final parts = raw.trim().split(' ');
-  if (parts.length < 2) return null;
+  final s = raw.trim().replaceAll('\u00A0', ' '); // NBSP -> espacio
 
-  final dmy = parts[0].split('.');
-  if (dmy.length != 3) return null;
-  final time = parts[1].split(':');
-  if (time.length != 2) return null;
+  // Aceptar separadores variados: ".", "/", "-" entre día/mes/año y ":" en hora
+  final re = RegExp(r'^(\d{1,2})[./-](\d{1,2})[./-](\d{4})\s+(\d{1,2}):(\d{2})$');
+  final m = re.firstMatch(s);
+  if (m == null) return null;
 
-  final dd = int.tryParse(dmy[0]);
-  final mm = int.tryParse(dmy[1]);
-  final yyyy = int.tryParse(dmy[2]);
-  final hh = int.tryParse(time[0]);
-  final min = int.tryParse(time[1]);
+  final dd = int.parse(m.group(1)!);
+  final mm = int.parse(m.group(2)!);
+  final yyyy = int.parse(m.group(3)!);
+  final hh = int.parse(m.group(4)!);
+  final min = int.parse(m.group(5)!);
 
-  if ([dd, mm, yyyy, hh, min].any((v) => v == null)) return null;
-
-  return DateTime(yyyy!, mm!, dd!, hh!, min!);
+  if (dd < 1 || dd > 31 || mm < 1 || mm > 12 || hh < 0 || hh > 23 || min < 0 || min > 59) {
+    return null;
+  }
+  return DateTime(yyyy, mm, dd, hh, min);
 }
 
 String toIsoMinute(DateTime dt) =>
