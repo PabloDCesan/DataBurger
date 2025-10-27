@@ -20,14 +20,28 @@ class UserAccount {
 class AuthState {
   final bool isLoading;
   final String? errorMessage;
+  final String? currentUsername;
 
-  const AuthState({this.isLoading = false, this.errorMessage});
+  const AuthState({
+    this.isLoading = false,
+    this.errorMessage,
+    this.currentUsername,
+  });
 
-  AuthState copyWith({bool? isLoading, String? errorMessage}) => AuthState(
+  AuthState copyWith({
+    bool? isLoading,
+    String? errorMessage,
+    String? currentUsername, 
+  }) =>
+      AuthState(
         isLoading: isLoading ?? this.isLoading,
         errorMessage: errorMessage,
+        currentUsername: currentUsername ?? this.currentUsername, 
       );
+
+  bool get isAuthenticated => currentUsername != null;
 }
+
 
 class AuthController extends Notifier<AuthState> {
   // “DB” en memoria para demo
@@ -42,7 +56,7 @@ class AuthController extends Notifier<AuthState> {
   AuthState build() => const AuthState();
 
   Future<bool> signIn(String username, String password) async {
-    state = state.copyWith(isLoading: true, errorMessage: null);
+    state = state.copyWith(isLoading: true, errorMessage: null,);
     await Future.delayed(const Duration(milliseconds: 250));
 
     final user = _users[username.toLowerCase()];
@@ -62,7 +76,7 @@ class AuthController extends Notifier<AuthState> {
 
     if (password == user.password) {
       user.failedAttempts = 0;
-      state = state.copyWith(isLoading: false, errorMessage: null);
+      state = state.copyWith(isLoading: false, errorMessage: null, currentUsername: user.username,);
       return true;
     } else {
       if (!user.isAdmin) {
@@ -91,8 +105,18 @@ class AuthController extends Notifier<AuthState> {
       user.failedAttempts = 0;
     }
   }
+
+  Future<void> logout() async {
+    state = const AuthState(
+      isLoading: false,
+      errorMessage: null,
+      currentUsername: null,
+    );
+  }
 }
+
 
 /// Provider para Riverpod 3+
 final authControllerProvider =
     NotifierProvider<AuthController, AuthState>(AuthController.new);
+
