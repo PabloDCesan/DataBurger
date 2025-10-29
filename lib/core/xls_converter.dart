@@ -266,4 +266,89 @@ finally {
     );
   }
   return outPath;
+
+}
+
+/// Lee un CSV a memoria y lo convierte en una tabla de celdas [fila][col],
+/// con soporte básico de campos entrecomillados y comillas escapadas "".
+Future<List<List<String>>> _csvToTable(String csvPath, {Encoding encoding = utf8}) async {
+  final lines = await File(csvPath).readAsLines(encoding: encoding);
+  if (lines.isEmpty) return const <List<String>>[];
+
+  // Autodetectar separador: ; , \t (elige el más probable en la 1ª línea)
+  String detectSep(String s) {
+    final cand = {';': 0, ',': 0, '\t': 0};
+    for (final k in cand.keys) {
+      // simple: cuenta ocurrencias fuera de comillas
+      bool inQ = false;
+      int c = 0;
+      for (int i = 0; i < s.length; i++) {
+        final ch = s[i];
+        if (ch == '"') {
+          if (inQ && i + 1 < s.length && s[i + 1] == '"') { i++; continue; }
+          inQ = !inQ;
+        } else if (!inQ && ch == k) {
+          c++;
+        }
+      }
+      cand[k] = c;
+    }
+    // el separador con mayor conteo
+    return cand.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+  }
+
+  final sep = detectSep(lines.first);
+
+  List<String> splitCsvLine(String s) {
+    final row = <String>[];
+    final buf = StringBuffer();
+    bool inQuotes = false;
+    for (int i = 0; i < s.length; i++) {
+      final ch = s[i];
+      if (ch == '"') {
+        if (inQuotes && i + 1 < s.length && s[i + 1] == '"') {
+          buf.write('"'); i++; // comilla escapada
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (!inQuotes && ch == sep) {
+        row.add(buf.toString().trim());
+        buf.clear();
+      } else {
+        buf.write(ch);
+      }
+    }
+    row.add(buf.toString().trim());
+    return row;
+  }
+
+  return lines.map(splitCsvLine).toList();
+}
+
+
+/// Convierte cualquier archivo soportado a tabla:
+/// - .csv: parsea directo
+/// - .xlsx: usa PowerShell para convertir a .csv (primera hoja) y parsea
+/// - .xls:  .xls -> .xlsx -> .csv -> parsea
+///
+/// Requiere Windows + Excel instalado para .xls/.xlsx (como tu conversión actual).
+Future<List<List<String>>> convertAnyToTable(String inputPath) async {
+  final ext = p.extension(inputPath).toLowerCase();
+
+  if (ext == '.csv') {
+    return _csvToTable(inputPath);
+  }
+
+  if (ext == '.xlsx') {
+    final csvPath = await convertXlsxToCsvWindows(inputPath);
+    return _csvToTable(csvPath);
+  }
+
+  if (ext == '.xls') {
+    final xlsxPath = await convertXlsToXlsxWindows(inputPath);
+    final csvPath = await convertXlsxToCsvWindows(xlsxPath);
+    return _csvToTable(csvPath);
+  }
+
+  throw FormatException('Extensión no soportada: $ext (usa .csv, .xlsx o .xls)');
 }

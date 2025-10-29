@@ -120,3 +120,11 @@ class AuthController extends Notifier<AuthState> {
 final authControllerProvider =
     NotifierProvider<AuthController, AuthState>(AuthController.new);
 
+// Selector: ¿el usuario logueado es admin?
+final isAdminProvider = Provider<bool>((ref) {
+  final auth = ref.watch(authControllerProvider);           // estado reactivo
+  final username = auth.currentUsername;
+  if (username == null) return false;
+  final ctrl = ref.read(authControllerProvider.notifier);   // acceso a métodos
+  return ctrl.isAdmin(username);
+});

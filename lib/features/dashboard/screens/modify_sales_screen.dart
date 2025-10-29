@@ -8,6 +8,7 @@ import '../../../core/export_service.dart';
 import '../widgets/dialogs/sales_daily_table.dart';
 import '../widgets/dialogs/sales_totals_table.dart';
 
+
 class ModifySalesScreen extends ConsumerStatefulWidget {
   final bool isAdmin;
   const ModifySalesScreen({super.key, required this.isAdmin});
@@ -21,6 +22,7 @@ class _ModifySalesScreenState extends ConsumerState<ModifySalesScreen> {
   String? _fileName;
   DateTime? _lastUpload;
   bool _prevMonthAvailable = false;
+  bool _isImporting = false;
 
   @override
   void initState() {
@@ -46,10 +48,12 @@ class _ModifySalesScreenState extends ConsumerState<ModifySalesScreen> {
   }
 
   Future<void> _importToDb() async {
+    if (_isImporting) return;                // evita doble click
     if (_pickedPath == null) {
       showError(context, 'Primero elegí un archivo.');
       return;
     }
+    setState(() => _isImporting = true);     // deshabilita botón y cambia texto
     final svc = SalesService(ref.read(databaseProvider));
     try {
       final res = await svc.importSalesFromFile(_pickedPath!, fileName: _fileName);
@@ -65,6 +69,9 @@ class _ModifySalesScreenState extends ConsumerState<ModifySalesScreen> {
       showError(context, 'Encabezados inválidos: ${e.message}');
     } catch (e) {
       showError(context, 'Problema en la carga: $e');
+    }
+    finally {
+      if (mounted) setState(() => _isImporting = false);
     }
   }
 
@@ -176,7 +183,7 @@ class _ModifySalesScreenState extends ConsumerState<ModifySalesScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 FilledButton.icon(
-                  onPressed: _pickFile,
+                  onPressed: _isImporting ? null : _pickFile,
                   icon: const Icon(Icons.folder_open),
                   label: const Text('Elegir archivo (.xlsx / .xls / .csv)'),
                 ),
@@ -191,9 +198,14 @@ class _ModifySalesScreenState extends ConsumerState<ModifySalesScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 FilledButton.icon(
-                  onPressed: (_pickedPath != null) ? _importToDb : null,
-                  icon: const Icon(Icons.save_alt),
-                  label: const Text('Importar / Guardar'),
+                  onPressed: (_pickedPath != null && !_isImporting) ? _importToDb : null,
+                  icon: _isImporting
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_alt),
+                  label: Text(_isImporting ? 'Trabajando...' : 'Importar / Guardar'),
                 ),
                 if (_fileName != null)
                   Padding(

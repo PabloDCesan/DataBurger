@@ -4,6 +4,8 @@ import 'package:csv/csv.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import '../features/expenses/expenses_service.dart';
+
 
 Future<String> _downloadsOrTemp() async {
   try {
@@ -90,4 +92,33 @@ Future<String> exportSalesTotalsCsv(Database db, {required DateTime month}) asyn
   final outPath = p.join(outDir, 'databurger_ventas_totales_${_yyyyMm(first)}.csv');
   await File(outPath).writeAsString(csv);
   return outPath;
+}
+
+Future<String> exportExpensesCsv(DatabaseExecutor db, {required DateTime month}) async {
+  final svc = ExpensesService(db);
+  final rows = await svc.expensesForMonth(month);
+
+  final dir = await _downloadsOrTemp();
+  final name = 'expenses_${month.year}-${month.month.toString().padLeft(2, '0')}.csv';
+  final file = File(p.join(dir, name));
+  final sink = file.openWrite();
+
+  // Encabezados nuevos
+  sink.writeln('fecha,tipo,categoria,monto,nota');
+
+  for (final r in rows) {
+    final fecha = r.fecha.toIso8601String().substring(0, 10);
+    final tipo = r.tipo;
+    // Escapar comillas si las hubiera en categoría/nota
+    final categoria = '"${r.categoria.replaceAll('"', '""')}"';
+    final nota = r.nota == null ? '' : '"${r.nota!.replaceAll('"', '""')}"';
+    // Monto en notación estándar (punto decimal)
+    final monto = r.monto.toStringAsFixed(2);
+
+    sink.writeln('$fecha,$tipo,$categoria,$monto,$nota');
+  }
+
+  await sink.flush();
+  await sink.close();
+  return file.path;
 }

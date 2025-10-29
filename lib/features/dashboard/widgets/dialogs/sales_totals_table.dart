@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/money_format.dart';
 
 class SalesTotalsTable extends StatelessWidget {
   final String title;
@@ -11,7 +12,7 @@ class SalesTotalsTable extends StatelessWidget {
     return AlertDialog(
       title: Text(title),
       content: SizedBox(
-        width: 900,
+        width: 950,
         height: 220,
         child: empty
             ? const Center(child: Text('Sin datos para mostrar'))
@@ -30,9 +31,12 @@ class SalesTotalsTable extends StatelessWidget {
                     DataRow(cells: [
                       DataCell(Text('${totals['first_day'] ?? '—'}')),
                       DataCell(Text('${totals['last_day'] ?? '—'}')),
-                      DataCell(Text('${totals['ingreso_real'] ?? 0}')),
-                      DataCell(Text('${totals['ingreso_total'] ?? 0}')),
-                      DataCell(Text('${totals['retiro_apps'] ?? 0}')),
+                      //DataCell(Text('${totals['ingreso_real'] ?? 0}')),
+                      DataCell(Text(MoneyFmt.format((totals['ingreso_real'] as num?) ?? 0),),),
+                      //DataCell(Text('${totals['ingreso_total'] ?? 0}')),
+                      DataCell(Text(MoneyFmt.format((totals['ingreso_total'] as num?) ?? 0),),),
+                      //DataCell(Text('${totals['retiro_apps'] ?? 0}')),
+                      DataCell(Text(MoneyFmt.format((totals['retiro_apps'] as num?) ?? 0),),),
                       DataCell(Text('${totals['count_pedidosya'] ?? 0}')),
                       DataCell(Text('${totals['count_rappi'] ?? 0}')),
                     ]),
